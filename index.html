@@ -30,6 +30,8 @@
   .auto { width:0; height:0; border:11px solid transparent; border-bottom:26px solid var(--neon); border-top:0; filter:drop-shadow(0 0 8px var(--neon)) }
   .maplibregl-ctrl-attrib { background:rgba(5,7,13,.7) !important; color:var(--tenue) }
   .maplibregl-ctrl-attrib a { color:var(--tenue) }
+  .maplibregl-ctrl-bottom-right { bottom:calc(64px + env(safe-area-inset-bottom,0px)) } /* sobre el botón CENTRAR */
+  #peaje[aria-pressed="false"] { color:var(--tenue) }
 </style>
 </head>
 <body>
@@ -38,6 +40,7 @@
 <div id="arriba" class="panel">
   <form id="buscar">
     <input id="q" type="search" placeholder="¿A dónde vamos?" autocomplete="off" aria-label="Destino">
+    <button id="peaje" type="button" aria-pressed="false">SIN PEAJE</button>
     <button type="submit">IR</button>
   </form>
   <div id="resultados"></div>
@@ -73,7 +76,13 @@ function aviso(texto) { $('aviso').textContent = texto; $('aviso').hidden = !tex
 const mapa = new maplibregl.Map({
   container: 'mapa',
   style: 'https://tiles.openfreemap.org/styles/dark', // datos de OpenStreetMap, sin clave
-  center: [-70.65, -33.45], zoom: 15, pitch: 60
+  center: [-70.65, -33.45], zoom: 15, pitch: 60, attributionControl: false
+});
+// El crédito a OpenStreetMap es obligatorio por licencia: queda plegado en un botón "i"
+mapa.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+mapa.once('load', () => {
+  const credito = document.querySelector('.maplibregl-ctrl-attrib');
+  credito?.classList.remove('maplibregl-compact-show'); credito?.removeAttribute('open');
 });
 
 mapa.on('load', () => {
@@ -155,7 +164,15 @@ $('buscar').onsubmit = async ev => {
 };
 
 // ---------- Ruta (OSRM) ----------
-let pasos = [], paso = 1;
+let pasos = [], paso = 1, destinoActual = null, sinPeaje = false;
+try { sinPeaje = localStorage.sinPeaje === '1'; } catch {} // recuerda la preferencia en este teléfono
+$('peaje').setAttribute('aria-pressed', sinPeaje);
+$('peaje').onclick = () => {
+  sinPeaje = !sinPeaje;
+  $('peaje').setAttribute('aria-pressed', sinPeaje);
+  try { localStorage.sinPeaje = sinPeaje ? '1' : '0'; } catch {}
+  if (destinoActual) trazarRuta(destinoActual); // recalcula la ruta activa
+};
 const GIROS = { left: 'Gira a la izquierda', right: 'Gira a la derecha', 'slight left': 'Mantente a la izquierda',
   'slight right': 'Mantente a la derecha', 'sharp left': 'Gira fuerte a la izquierda', 'sharp right': 'Gira fuerte a la derecha',
   straight: 'Sigue derecho', uturn: 'Da la vuelta' };
@@ -164,13 +181,17 @@ async function trazarRuta(destino) {
   const origen = pos || mapa.getCenter().toArray(); // sin GPS parte del centro del mapa (útil para probar en el PC)
   // shortcut: servidor de demostración de OSRM, sin garantía de servicio; cambiar a uno propio o de pago si se usa a diario
   const url = `https://router.project-osrm.org/route/v1/driving/${origen};${destino}?overview=full&geometries=geojson&steps=true`;
+  destinoActual = destino;
   try {
-    const r = await (await fetch(url)).json();
+    let r = await (await fetch(url + (sinPeaje ? '&exclude=toll' : ''))).json();
+    let peaje = sinPeaje ? ' · sin peaje' : '';
+    // si el servidor no puede evitar peajes (o no hay camino sin ellos), se usa la ruta normal y se avisa
+    if (sinPeaje && r.code !== 'Ok') { r = await (await fetch(url)).json(); peaje = ' · CON peaje (no hay alternativa)'; }
     if (r.code !== 'Ok') return aviso('No hay ruta en auto hasta ahí.');
     const ruta = r.routes[0];
     mapa.getSource('ruta').setData({ type: 'Feature', geometry: ruta.geometry });
     pasos = ruta.legs[0].steps; paso = Math.min(1, pasos.length - 1);
-    $('resumen').textContent = (ruta.distance / 1000).toFixed(1) + ' km · ' + Math.round(ruta.duration / 60) + ' min';
+    $('resumen').textContent = (ruta.distance / 1000).toFixed(1) + ' km · ' + Math.round(ruta.duration / 60) + ' min' + peaje;
     $('guia').hidden = false;
     aviso('');
     if (pos) { seguir = true; mapa.easeTo({ center: pos, bearing: direccion, pitch: 60, zoom: 17 }); }
@@ -194,7 +215,7 @@ function actualizarGuia() {
 }
 
 $('cancelar').onclick = () => {
-  pasos = []; $('guia').hidden = true;
+  pasos = []; destinoActual = null; $('guia').hidden = true;
   mapa.getSource('ruta').setData({ type: 'FeatureCollection', features: [] });
 };
 </script>
