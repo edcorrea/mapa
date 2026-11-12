@@ -23,7 +23,8 @@
   #resultados:not(:empty):not(:has(button)) { padding:10px 12px }
   #guia { border-top:1px solid rgba(0,229,255,.25); padding:10px 12px; display:flex; gap:10px; align-items:center }
   #guia b { flex:1; min-width:0 }
-  #guia small { color:var(--tenue); white-space:nowrap }
+  #guia { flex-wrap:wrap }
+  #guia small { color:var(--tenue); order:3; flex-basis:100% } /* el resumen va en su propia línea */
   #velocimetro { left:10px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); padding:8px 16px; transform:skewX(-6deg); text-align:right }
   #vel { font:italic 800 54px/1 "Arial Narrow",Impact,sans-serif; color:var(--neon); text-shadow:0 0 14px var(--neon); font-variant-numeric:tabular-nums }
   #velocimetro span { display:block; font-size:11px; letter-spacing:.2em; color:var(--tenue) }
@@ -56,7 +57,7 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const VERSION = 'v6'; // se sube en cada cambio; se muestra en el botón "i"
+const VERSION = 'v7'; // se sube en cada cambio; se muestra en el botón "i"
 const RAD = Math.PI / 180;
 
 // distancia en metros entre dos puntos [lon, lat]
@@ -230,7 +231,9 @@ async function trazarRuta(destino) {
     paso = Math.min(1, pasos.length - 1);
     // has_toll lo informa el servidor: dice si la ruta final pasa por algún peaje
     const peaje = r.trip.summary.has_toll ? (sinPeaje ? ' · CON peaje (no hay alternativa)' : ' · con peaje') : ' · sin peaje';
-    $('resumen').textContent = r.trip.summary.length.toFixed(1) + ' km · ' + Math.round(r.trip.summary.time / 60) + ' min' + peaje;
+    // hora de llegada = hora actual + duración estimada (en segundos) al calcular la ruta
+    const llegada = new Date(Date.now() + r.trip.summary.time * 1000).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+    $('resumen').textContent = r.trip.summary.length.toFixed(1) + ' km · ' + Math.round(r.trip.summary.time / 60) + ' min · llegada ' + llegada + peaje;
     $('guia').hidden = false;
     aviso('');
     if (pos) { seguir = true; mapa.easeTo({ center: pos, bearing: direccion, pitch: 60, zoom: 17 }); }
