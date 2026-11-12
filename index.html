@@ -8,37 +8,58 @@
 <title>Mapa NFS</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
-  :root { --bg:#05070d; --panel:rgba(5,7,13,.82); --neon:#00e5ff; --ruta:#ff2bd6; --texto:#e8f6ff; --tenue:#7f93ad; color-scheme:dark }
+  :root { --bg:#05070d; --panel:rgba(5,7,13,.82); --neon:#00e5ff; --ruta:#ff2bd6; --texto:#e8f6ff; --tenue:#7f93ad;
+    --borde:var(--neon); --linea:rgba(0,229,255,.25); --brillo:0 0 12px rgba(0,229,255,.35); --sesgo:skewX(-6deg); color-scheme:dark }
+  /* diseño RADAR: gris, plano, sin brillos ni inclinación */
+  body[data-tema="radar"] { --panel:rgba(0,0,0,.72); --neon:#fff; --texto:#fff; --tenue:#b9bec4;
+    --borde:rgba(255,255,255,.3); --linea:rgba(255,255,255,.2); --brillo:none; --sesgo:none }
+  body[data-tema="radar"] #vel { font-style:normal; text-shadow:none }
+  body[data-tema="radar"] .auto { filter:drop-shadow(0 0 2px #000) }
+  [hidden] { display:none !important }
   html,body,#mapa { height:100%; margin:0; background:var(--bg) }
   body { font:15px/1.3 "Segoe UI",Roboto,Arial,sans-serif; color:var(--texto); overflow:hidden }
-  .panel { position:fixed; background:var(--panel); border:1px solid var(--neon); box-shadow:0 0 12px rgba(0,229,255,.35); backdrop-filter:blur(6px) }
-  #arriba { top:calc(10px + env(safe-area-inset-top,0px)); left:10px; right:10px; transform:skewX(-6deg) }
+  .panel { position:fixed; background:var(--panel); border:1px solid var(--borde); box-shadow:var(--brillo); backdrop-filter:blur(6px) }
+  #arriba { top:calc(10px + env(safe-area-inset-top,0px)); left:10px; right:10px; transform:var(--sesgo) }
   #buscar { display:flex }
   #q { flex:1; min-width:0; background:none; border:0; color:var(--texto); font:inherit; padding:12px; outline:none }
   #q::placeholder { color:var(--tenue) }
   button { background:none; border:0; color:var(--neon); font:inherit; font-weight:700; padding:12px 14px; cursor:pointer }
   button:focus-visible, #q:focus-visible { outline:2px solid var(--neon); outline-offset:-2px }
-  #resultados button { display:block; width:100%; text-align:left; color:var(--texto); font-weight:400; border-top:1px solid rgba(0,229,255,.25) }
+  #resultados button { display:block; width:100%; text-align:left; color:var(--texto); font-weight:400; border-top:1px solid var(--linea) }
   #resultados { color:var(--tenue) }
   #resultados:not(:empty):not(:has(button)) { padding:10px 12px }
-  #guia { border-top:1px solid rgba(0,229,255,.25); padding:10px 12px; display:flex; gap:10px; align-items:center }
+  #guia { border-top:1px solid var(--linea); padding:10px 12px; display:flex; gap:10px; align-items:center }
   #guia b { flex:1; min-width:0 }
   #guia { flex-wrap:wrap }
   #guia small { color:var(--tenue); order:3; flex-basis:100% } /* el resumen va en su propia línea */
-  #velocimetro { left:10px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); padding:8px 16px; transform:skewX(-6deg); text-align:right }
+  #velocimetro { left:10px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); padding:8px 16px; transform:var(--sesgo); text-align:right }
   #vel { font:italic 800 54px/1 "Arial Narrow",Impact,sans-serif; color:var(--neon); text-shadow:0 0 14px var(--neon); font-variant-numeric:tabular-nums }
   #velocimetro span { display:block; font-size:11px; letter-spacing:.2em; color:var(--tenue) }
-  #centrar { right:10px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); transform:skewX(-6deg) }
+  #centrar { right:10px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); transform:var(--sesgo) }
   #aviso { left:10px; right:10px; bottom:calc(110px + env(safe-area-inset-bottom,0px)); padding:10px 12px; border-color:#ffb300; color:#ffd98a }
   .auto { width:0; height:0; border:11px solid transparent; border-bottom:26px solid var(--neon); border-top:0; filter:drop-shadow(0 0 8px var(--neon)) }
-  .maplibregl-ctrl-attrib { background:rgba(5,7,13,.7) !important; color:var(--tenue) }
+  .maplibregl-ctrl-attrib { background:var(--panel) !important; color:var(--tenue) }
   .maplibregl-ctrl-attrib a { color:var(--tenue) }
   .maplibregl-ctrl-bottom-right { bottom:calc(64px + env(safe-area-inset-bottom,0px)) } /* sobre el botón CENTRAR */
   #peaje[aria-pressed="false"] { color:var(--tenue) }
+  /* pantalla inicial para elegir diseño */
+  #inicio { position:fixed; inset:0; z-index:10; background:#05070d; color:#e8f6ff; display:flex; flex-direction:column; justify-content:center; gap:16px;
+    padding:24px max(24px, env(safe-area-inset-right,0px)) 24px max(24px, env(safe-area-inset-left,0px)) }
+  #inicio p { margin:0; text-align:center; letter-spacing:.15em; font-size:13px }
+  #inicio button { padding:22px; font-size:22px; border:2px solid; letter-spacing:.1em }
+  #inicio small { display:block; font-size:13px; font-weight:400; letter-spacing:0; margin-top:4px }
+  #inicio [data-tema="neon"] { color:#00e5ff; background:#05070d; box-shadow:0 0 14px rgba(0,229,255,.4); font-style:italic }
+  #inicio [data-tema="radar"] { color:#fff; background:#4b4f55 }
 </style>
 </head>
 <body>
 <div id="mapa"></div>
+
+<div id="inicio">
+  <p>ELIGE EL DISEÑO DEL MAPA</p>
+  <button type="button" data-tema="neon">NEÓN<small>Nocturno, vista inclinada, edificios 3D</small></button>
+  <button type="button" data-tema="radar">RADAR<small>Gris, calles claras, vista desde arriba</small></button>
+</div>
 
 <div id="arriba" class="panel">
   <form id="buscar">
@@ -57,7 +78,7 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const VERSION = 'v7'; // se sube en cada cambio; se muestra en el botón "i"
+const VERSION = 'v8'; // se sube en cada cambio; se muestra en el botón "i"
 const RAD = Math.PI / 180;
 
 // distancia en metros entre dos puntos [lon, lat]
@@ -89,21 +110,45 @@ mapa.once('load', () => {
   credito?.classList.remove('maplibregl-compact-show'); credito?.removeAttribute('open');
 });
 
-mapa.on('load', () => {
-  // Repinta el estilo base con colores neón, según la capa de datos de cada capa
+// Colores del mapa para cada diseño
+const TEMAS = {
+  neon: { fondo: '#05070d', agua: '#08172e', edificio: '#0c1220', texto: '#9fdcff', halo: '#000', ruta: '#ff2bd6', brillo: 0.3, inclinacion: 60,
+    vias: ['match', ['get', 'class'], ['motorway', 'trunk'], '#ff7a00', ['primary', 'secondary'], '#ffd000', ['rail', 'transit'], '#1b2333', '#3d5278'] },
+  radar: { fondo: '#4b4f55', terreno: '#545a56', agua: '#5f8fb0', edificio: '#5d6269', texto: '#fff', halo: '#1c1d1f', ruta: '#a65bf0', brillo: 0, inclinacion: 0,
+    vias: ['match', ['get', 'class'], ['motorway', 'trunk'], '#f2f2f2', ['primary', 'secondary'], '#dcdfe2', ['rail', 'transit'], '#3c3f43', '#bfc3c8'] }
+};
+let tema = null, cargado = false;
+
+// Repinta el estilo base según la capa de datos de cada capa; necesita diseño elegido y mapa cargado
+function aplicarTema() {
+  if (!tema || !cargado) return;
+  const t = TEMAS[tema];
   for (const c of mapa.getStyle().layers) {
     const datos = c['source-layer'];
-    if (c.type === 'background') mapa.setPaintProperty(c.id, 'background-color', '#05070d');
-    else if (datos === 'water' && c.type === 'fill') mapa.setPaintProperty(c.id, 'fill-color', '#08172e');
-    else if (datos === 'building' && c.type === 'fill') mapa.setPaintProperty(c.id, 'fill-color', '#0c1220');
-    else if (datos === 'transportation' && c.type === 'line')
-      mapa.setPaintProperty(c.id, 'line-color', ['match', ['get', 'class'],
-        ['motorway', 'trunk'], '#ff7a00', ['primary', 'secondary'], '#ffd000', ['rail', 'transit'], '#1b2333', '#3d5278']);
+    if (c.type === 'background') mapa.setPaintProperty(c.id, 'background-color', t.fondo);
+    else if (datos === 'water' && c.type === 'fill') mapa.setPaintProperty(c.id, 'fill-color', t.agua);
+    else if (datos === 'building' && c.type === 'fill') mapa.setPaintProperty(c.id, 'fill-color', t.edificio);
+    else if (c.type === 'fill' && t.terreno) mapa.setPaintProperty(c.id, 'fill-color', t.terreno); // parques, usos de suelo
+    else if (datos === 'transportation' && c.type === 'line') mapa.setPaintProperty(c.id, 'line-color', t.vias);
     else if (c.type === 'symbol') {
-      mapa.setPaintProperty(c.id, 'text-color', '#9fdcff');
-      mapa.setPaintProperty(c.id, 'text-halo-color', '#000');
+      mapa.setPaintProperty(c.id, 'text-color', t.texto);
+      mapa.setPaintProperty(c.id, 'text-halo-color', t.halo);
     }
   }
+  if (mapa.getLayer('edificios3d')) mapa.setLayoutProperty('edificios3d', 'visibility', t.inclinacion ? 'visible' : 'none');
+  mapa.setPaintProperty('ruta', 'line-color', t.ruta);
+  mapa.setPaintProperty('ruta-brillo', 'line-color', t.ruta);
+  mapa.setPaintProperty('ruta-brillo', 'line-opacity', t.brillo);
+  mapa.easeTo({ pitch: t.inclinacion });
+}
+
+for (const b of document.querySelectorAll('#inicio button')) b.onclick = () => {
+  tema = b.dataset.tema; document.body.dataset.tema = tema;
+  $('inicio').hidden = true;
+  aplicarTema();
+};
+
+mapa.on('load', () => {
   const fuente = Object.keys(mapa.getStyle().sources).find(k => mapa.getStyle().sources[k].type === 'vector');
   try { // edificios 3D
     mapa.addLayer({ id: 'edificios3d', type: 'fill-extrusion', source: fuente, 'source-layer': 'building', minzoom: 14,
@@ -116,6 +161,7 @@ mapa.on('load', () => {
     paint: { 'line-color': '#ff2bd6', 'line-width': 14, 'line-opacity': 0.3, 'line-blur': 6 } });
   mapa.addLayer({ id: 'ruta', type: 'line', source: 'ruta', layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': '#ff2bd6', 'line-width': 5 } });
+  cargado = true; aplicarTema();
 });
 
 // ---------- GPS ----------
@@ -124,7 +170,7 @@ const auto = new maplibregl.Marker({ element: flecha, rotationAlignment: 'map', 
 let pos = null, direccion = 0, seguir = true;
 
 mapa.on('dragstart', () => { seguir = false; });
-$('centrar').onclick = () => { seguir = true; if (pos) mapa.easeTo({ center: pos, bearing: direccion, pitch: 60, zoom: 17 }); };
+$('centrar').onclick = () => { seguir = true; if (pos) mapa.easeTo({ center: pos, bearing: direccion, pitch: TEMAS[tema].inclinacion, zoom: 17 }); };
 
 if (!navigator.geolocation) aviso('Este navegador no tiene GPS.');
 else navigator.geolocation.watchPosition(p => {
@@ -236,7 +282,7 @@ async function trazarRuta(destino) {
     $('resumen').textContent = r.trip.summary.length.toFixed(1) + ' km · ' + Math.round(r.trip.summary.time / 60) + ' min · llegada ' + llegada + peaje;
     $('guia').hidden = false;
     aviso('');
-    if (pos) { seguir = true; mapa.easeTo({ center: pos, bearing: direccion, pitch: 60, zoom: 17 }); }
+    if (pos) { seguir = true; mapa.easeTo({ center: pos, bearing: direccion, pitch: TEMAS[tema].inclinacion, zoom: 17 }); }
     else { // vista general de la ruta
       const lim = linea.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(origen, origen));
       mapa.fitBounds(lim, { padding: 80, pitch: 0 });
