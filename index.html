@@ -141,27 +141,34 @@ else navigator.geolocation.watchPosition(p => {
 const despierta = () => navigator.wakeLock?.request('screen').catch(() => {});
 despierta(); document.addEventListener('visibilitychange', () => { if (!document.hidden) despierta(); });
 
-// ---------- Búsqueda (Nominatim) ----------
-$('buscar').onsubmit = async ev => {
-  ev.preventDefault();
-  const q = $('q').value.trim(); if (!q) return;
+// ---------- Búsqueda (Photon: pensado para sugerir mientras se escribe) ----------
+let espera = null, pedido = null;
+
+async function buscar() {
+  clearTimeout(espera);
+  const q = $('q').value.trim();
+  if (q.length < 3) { $('resultados').textContent = ''; return; }
   const c = pos || mapa.getCenter().toArray();
-  // prioriza resultados cerca (caja de ~1° alrededor)
-  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=es&q=' + encodeURIComponent(q) +
-    `&viewbox=${c[0] - 1},${c[1] + 1},${c[0] + 1},${c[1] - 1}`;
-  $('resultados').textContent = '';
+  pedido?.abort(); pedido = new AbortController(); // descarta la respuesta de lo que se escribió antes
+  // lat/lon hacen que aparezcan primero los lugares cercanos
+  const url = 'https://photon.komoot.io/api/?limit=5&q=' + encodeURIComponent(q) + `&lat=${c[1]}&lon=${c[0]}`;
   try {
-    const lugares = await (await fetch(url)).json();
+    const lugares = (await (await fetch(url, { signal: pedido.signal })).json()).features;
+    $('resultados').textContent = '';
     if (!lugares.length) return aviso('No encontré "' + q + '".');
     aviso('');
     for (const l of lugares) {
-      const b = document.createElement('button'); b.type = 'button';
-      b.textContent = l.display_name;
-      b.onclick = () => { $('resultados').textContent = ''; $('q').blur(); trazarRuta([+l.lon, +l.lat]); };
+      const p = l.properties, b = document.createElement('button'); b.type = 'button';
+      const calle = [p.street, p.housenumber].filter(Boolean).join(' ');
+      b.textContent = [p.name, calle, p.city, p.state].filter(Boolean).join(', ');
+      b.onclick = () => { $('resultados').textContent = ''; $('q').blur(); trazarRuta(l.geometry.coordinates); };
       $('resultados').append(b);
     }
-  } catch { aviso('No se pudo buscar. Revisa la conexión.'); }
-};
+  } catch (e) { if (e.name !== 'AbortError') aviso('No se pudo buscar. Revisa la conexión.'); }
+}
+// sugiere 300 ms después de la última tecla; "IR" o Enter buscan de inmediato
+$('q').oninput = () => { clearTimeout(espera); espera = setTimeout(buscar, 300); };
+$('buscar').onsubmit = ev => { ev.preventDefault(); buscar(); };
 
 // ---------- Ruta (Valhalla) ----------
 let pasos = [], paso = 1, destinoActual = null, sinPeaje = false;
