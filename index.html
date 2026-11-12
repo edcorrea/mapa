@@ -19,6 +19,8 @@
   button { background:none; border:0; color:var(--neon); font:inherit; font-weight:700; padding:12px 14px; cursor:pointer }
   button:focus-visible, #q:focus-visible { outline:2px solid var(--neon); outline-offset:-2px }
   #resultados button { display:block; width:100%; text-align:left; color:var(--texto); font-weight:400; border-top:1px solid rgba(0,229,255,.25) }
+  #resultados { color:var(--tenue) }
+  #resultados:not(:empty):not(:has(button)) { padding:10px 12px }
   #guia { border-top:1px solid rgba(0,229,255,.25); padding:10px 12px; display:flex; gap:10px; align-items:center }
   #guia b { flex:1; min-width:0 }
   #guia small { color:var(--tenue); white-space:nowrap }
@@ -141,34 +143,48 @@ else navigator.geolocation.watchPosition(p => {
 const despierta = () => navigator.wakeLock?.request('screen').catch(() => {});
 despierta(); document.addEventListener('visibilitychange', () => { if (!document.hidden) despierta(); });
 
-// ---------- Búsqueda (Photon: pensado para sugerir mientras se escribe) ----------
+// ---------- Búsqueda: Photon sugiere mientras se escribe; Nominatim responde a "IR" o Enter ----------
 let espera = null, pedido = null;
 
-async function buscar() {
+async function buscar(conBoton) {
   clearTimeout(espera);
   const q = $('q').value.trim();
   if (q.length < 3) { $('resultados').textContent = ''; return; }
   const c = pos || mapa.getCenter().toArray();
   pedido?.abort(); pedido = new AbortController(); // descarta la respuesta de lo que se escribió antes
-  // lat/lon hacen que aparezcan primero los lugares cercanos
-  const url = 'https://photon.komoot.io/api/?limit=5&q=' + encodeURIComponent(q) + `&lat=${c[1]}&lon=${c[0]}`;
+  // en ambos servicios se da prioridad a los lugares cercanos
+  const url = conBoton
+    ? 'https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=es&q=' + encodeURIComponent(q) +
+      `&viewbox=${c[0] - 1},${c[1] + 1},${c[0] + 1},${c[1] - 1}`
+    : 'https://photon.komoot.io/api/?limit=5&q=' + encodeURIComponent(q) + `&lat=${c[1]}&lon=${c[0]}`;
+  if (!$('resultados').children.length) $('resultados').textContent = 'Buscando…';
   try {
-    const lugares = (await (await fetch(url, { signal: pedido.signal })).json()).features;
+    const datos = await (await fetch(url, { signal: pedido.signal })).json();
+    // se deja cada resultado como { texto, punto } sin importar de qué servicio vino
+    const lugares = conBoton
+      ? datos.map(l => ({ texto: l.display_name, punto: [+l.lon, +l.lat] }))
+      : datos.features.map(l => {
+          const p = l.properties, calle = [p.street, p.housenumber].filter(Boolean).join(' ');
+          return { texto: [p.name, calle, p.city, p.state].filter(Boolean).join(', '), punto: l.geometry.coordinates };
+        });
     $('resultados').textContent = '';
     if (!lugares.length) return aviso('No encontré "' + q + '".');
     aviso('');
     for (const l of lugares) {
-      const p = l.properties, b = document.createElement('button'); b.type = 'button';
-      const calle = [p.street, p.housenumber].filter(Boolean).join(' ');
-      b.textContent = [p.name, calle, p.city, p.state].filter(Boolean).join(', ');
-      b.onclick = () => { $('resultados').textContent = ''; $('q').blur(); trazarRuta(l.geometry.coordinates); };
+      const b = document.createElement('button'); b.type = 'button';
+      b.textContent = l.texto;
+      b.onclick = () => { $('resultados').textContent = ''; $('q').blur(); trazarRuta(l.punto); };
       $('resultados').append(b);
     }
-  } catch (e) { if (e.name !== 'AbortError') aviso('No se pudo buscar. Revisa la conexión.'); }
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    $('resultados').textContent = '';
+    aviso('No se pudo buscar. Revisa la conexión.');
+  }
 }
 // sugiere 300 ms después de la última tecla; "IR" o Enter buscan de inmediato
 $('q').oninput = () => { clearTimeout(espera); espera = setTimeout(buscar, 300); };
-$('buscar').onsubmit = ev => { ev.preventDefault(); buscar(); };
+$('buscar').onsubmit = ev => { ev.preventDefault(); buscar(true); };
 
 // ---------- Ruta (Valhalla) ----------
 let pasos = [], paso = 1, destinoActual = null, sinPeaje = false;
