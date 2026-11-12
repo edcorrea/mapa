@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#05070d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Mapa NFS</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  :root { --bg:#05070d; --panel:rgba(5,7,13,.82); --neon:#00e5ff; --ruta:#ff2bd6; --texto:#e8f6ff; --tenue:#7f93ad; color-scheme:dark }
+  html,body,#mapa { height:100%; margin:0; background:var(--bg) }
+  body { font:15px/1.3 "Segoe UI",Roboto,Arial,sans-serif; color:var(--texto); overflow:hidden }
+  .panel { position:fixed; background:var(--panel); border:1px solid var(--neon); box-shadow:0 0 12px rgba(0,229,255,.35); backdrop-filter:blur(6px) }
+  #arriba { top:calc(10px + env(safe-area-inset-top,0px)); left:10px; right:10px; transform:skewX(-6deg) }
+  #buscar { display:flex }
+  #q { flex:1; min-width:0; background:none; border:0; color:var(--texto); font:inherit; padding:12px; outline:none }
+  #q::placeholder { color:var(--tenue) }
+  button { background:none; border:0; color:var(--neon); font:inherit; font-weight:700; padding:12px 14px; cursor:pointer }
+  button:focus-visible, #q:focus-visible { outline:2px solid var(--neon); outline-offset:-2px }
+  #resultados button { display:block; width:100%; text-align:left; color:var(--texto); font-weight:400; border-top:1px solid rgba(0,229,255,.25) }
+  #guia { border-top:1px solid rgba(0,229,255,.25); padding:10px 12px; display:flex; gap:10px; align-items:center }
+  #guia b { flex:1; min-width:0 }
+  #guia small { color:var(--tenue); white-space:nowrap }
+  #velocimetro { left:10px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); padding:8px 16px; transform:skewX(-6deg); text-align:right }
+  #vel { font:italic 800 54px/1 "Arial Narrow",Impact,sans-serif; color:var(--neon); text-shadow:0 0 14px var(--neon); font-variant-numeric:tabular-nums }
+  #velocimetro span { display:block; font-size:11px; letter-spacing:.2em; color:var(--tenue) }
+  #centrar { right:10px; bottom:calc(14px + env(safe-area-inset-bottom,0px)); transform:skewX(-6deg) }
+  #aviso { left:10px; right:10px; bottom:calc(110px + env(safe-area-inset-bottom,0px)); padding:10px 12px; border-color:#ffb300; color:#ffd98a }
+  .auto { width:0; height:0; border:11px solid transparent; border-bottom:26px solid var(--neon); border-top:0; filter:drop-shadow(0 0 8px var(--neon)) }
+  .maplibregl-ctrl-attrib { background:rgba(5,7,13,.7) !important; color:var(--tenue) }
+  .maplibregl-ctrl-attrib a { color:var(--tenue) }
+</style>
+</head>
+<body>
+<div id="mapa"></div>
+
+<div id="arriba" class="panel">
+  <form id="buscar">
+    <input id="q" type="search" placeholder="¿A dónde vamos?" autocomplete="off" aria-label="Destino">
+    <button type="submit">IR</button>
+  </form>
+  <div id="resultados"></div>
+  <div id="guia" hidden><b id="maniobra"></b><small id="resumen"></small><button id="cancelar" type="button" aria-label="Cancelar ruta">✕</button></div>
+</div>
+
+<div id="velocimetro" class="panel"><div id="vel">0</div><span>KM/H</span></div>
+<button id="centrar" class="panel" type="button">CENTRAR</button>
+<div id="aviso" class="panel" hidden></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const RAD = Math.PI / 180;
+
+// distancia en metros entre dos puntos [lon, lat]
+function distancia(a, b) {
+  const dLat = (b[1] - a[1]) * RAD, dLon = (b[0] - a[0]) * RAD;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * RAD) * Math.cos(b[1] * RAD) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+// rumbo en grados (0 = norte) de a hacia b
+function rumbo(a, b) {
+  const y = Math.sin((b[0] - a[0]) * RAD) * Math.cos(b[1] * RAD);
+  const x = Math.cos(a[1] * RAD) * Math.sin(b[1] * RAD) - Math.sin(a[1] * RAD) * Math.cos(b[1] * RAD) * Math.cos((b[0] - a[0]) * RAD);
+  return (Math.atan2(y, x) / RAD + 360) % 360;
+}
+// verificación: 1° de latitud ≈ 111,2 km; ir al norte = rumbo 0
+console.assert(Math.abs(distancia([0, 0], [0, 1]) - 111195) < 50 && rumbo([0, 0], [0, 1]) === 0, 'geometría mal');
+
+function aviso(texto) { $('aviso').textContent = texto; $('aviso').hidden = !texto; }
+
+const mapa = new maplibregl.Map({
+  container: 'mapa',
+  style: 'https://tiles.openfreemap.org/styles/dark', // datos de OpenStreetMap, sin clave
+  center: [-70.65, -33.45], zoom: 15, pitch: 60
+});
+
+mapa.on('load', () => {
+  // Repinta el estilo base con colores neón, según la capa de datos de cada capa
+  for (const c of mapa.getStyle().layers) {
+    const datos = c['source-layer'];
+    if (c.type === 'background') mapa.setPaintProperty(c.id, 'background-color', '#05070d');
+    else if (datos === 'water' && c.type === 'fill') mapa.setPaintProperty(c.id, 'fill-color', '#08172e');
+    else if (datos === 'building' && c.type === 'fill') mapa.setPaintProperty(c.id, 'fill-color', '#0c1220');
+    else if (datos === 'transportation' && c.type === 'line')
+      mapa.setPaintProperty(c.id, 'line-color', ['match', ['get', 'class'],
+        ['motorway', 'trunk'], '#ff7a00', ['primary', 'secondary'], '#ffd000', ['rail', 'transit'], '#1b2333', '#3d5278']);
+    else if (c.type === 'symbol') {
+      mapa.setPaintProperty(c.id, 'text-color', '#9fdcff');
+      mapa.setPaintProperty(c.id, 'text-halo-color', '#000');
+    }
+  }
+  const fuente = Object.keys(mapa.getStyle().sources).find(k => mapa.getStyle().sources[k].type === 'vector');
+  try { // edificios 3D
+    mapa.addLayer({ id: 'edificios3d', type: 'fill-extrusion', source: fuente, 'source-layer': 'building', minzoom: 14,
+      paint: { 'fill-extrusion-color': '#101a2e', 'fill-extrusion-opacity': 0.85,
+               'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 6] } });
+  } catch (e) { console.warn('sin edificios 3D', e); }
+
+  mapa.addSource('ruta', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  mapa.addLayer({ id: 'ruta-brillo', type: 'line', source: 'ruta', layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#ff2bd6', 'line-width': 14, 'line-opacity': 0.3, 'line-blur': 6 } });
+  mapa.addLayer({ id: 'ruta', type: 'line', source: 'ruta', layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#ff2bd6', 'line-width': 5 } });
+});
+
+// ---------- GPS ----------
+const flecha = document.createElement('div'); flecha.className = 'auto';
+const auto = new maplibregl.Marker({ element: flecha, rotationAlignment: 'map', pitchAlignment: 'map' });
+let pos = null, direccion = 0, seguir = true;
+
+mapa.on('dragstart', () => { seguir = false; });
+$('centrar').onclick = () => { seguir = true; if (pos) mapa.easeTo({ center: pos, bearing: direccion, pitch: 60, zoom: 17 }); };
+
+if (!navigator.geolocation) aviso('Este navegador no tiene GPS.');
+else navigator.geolocation.watchPosition(p => {
+  const nueva = [p.coords.longitude, p.coords.latitude];
+  // si el GPS no entrega rumbo, se calcula con el punto anterior
+  if (p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 1) direccion = p.coords.heading;
+  else if (pos && distancia(pos, nueva) > 3) direccion = rumbo(pos, nueva);
+  pos = nueva;
+  aviso('');
+  $('vel').textContent = Math.round((p.coords.speed || 0) * 3.6); // m/s -> km/h
+  auto.setLngLat(pos).setRotation(direccion).addTo(mapa);
+  if (seguir) mapa.easeTo({ center: pos, bearing: direccion, zoom: Math.max(mapa.getZoom(), 16), duration: 900 });
+  actualizarGuia();
+}, e => aviso(e.code === 1 ? 'Permite la ubicación para ver tu posición (requiere HTTPS).' : 'Sin señal de GPS.'),
+{ enableHighAccuracy: true, maximumAge: 1000 });
+
+// mantiene la pantalla encendida mientras se maneja (si el navegador lo permite)
+const despierta = () => navigator.wakeLock?.request('screen').catch(() => {});
+despierta(); document.addEventListener('visibilitychange', () => { if (!document.hidden) despierta(); });
+
+// ---------- Búsqueda (Nominatim) ----------
+$('buscar').onsubmit = async ev => {
+  ev.preventDefault();
+  const q = $('q').value.trim(); if (!q) return;
+  const c = pos || mapa.getCenter().toArray();
+  // prioriza resultados cerca (caja de ~1° alrededor)
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=es&q=' + encodeURIComponent(q) +
+    `&viewbox=${c[0] - 1},${c[1] + 1},${c[0] + 1},${c[1] - 1}`;
+  $('resultados').textContent = '';
+  try {
+    const lugares = await (await fetch(url)).json();
+    if (!lugares.length) return aviso('No encontré "' + q + '".');
+    aviso('');
+    for (const l of lugares) {
+      const b = document.createElement('button'); b.type = 'button';
+      b.textContent = l.display_name;
+      b.onclick = () => { $('resultados').textContent = ''; $('q').blur(); trazarRuta([+l.lon, +l.lat]); };
+      $('resultados').append(b);
+    }
+  } catch { aviso('No se pudo buscar. Revisa la conexión.'); }
+};
+
+// ---------- Ruta (OSRM) ----------
+let pasos = [], paso = 1;
+const GIROS = { left: 'Gira a la izquierda', right: 'Gira a la derecha', 'slight left': 'Mantente a la izquierda',
+  'slight right': 'Mantente a la derecha', 'sharp left': 'Gira fuerte a la izquierda', 'sharp right': 'Gira fuerte a la derecha',
+  straight: 'Sigue derecho', uturn: 'Da la vuelta' };
+
+async function trazarRuta(destino) {
+  const origen = pos || mapa.getCenter().toArray(); // sin GPS parte del centro del mapa (útil para probar en el PC)
+  // shortcut: servidor de demostración de OSRM, sin garantía de servicio; cambiar a uno propio o de pago si se usa a diario
+  const url = `https://router.project-osrm.org/route/v1/driving/${origen};${destino}?overview=full&geometries=geojson&steps=true`;
+  try {
+    const r = await (await fetch(url)).json();
+    if (r.code !== 'Ok') return aviso('No hay ruta en auto hasta ahí.');
+    const ruta = r.routes[0];
+    mapa.getSource('ruta').setData({ type: 'Feature', geometry: ruta.geometry });
+    pasos = ruta.legs[0].steps; paso = Math.min(1, pasos.length - 1);
+    $('resumen').textContent = (ruta.distance / 1000).toFixed(1) + ' km · ' + Math.round(ruta.duration / 60) + ' min';
+    $('guia').hidden = false;
+    aviso('');
+    if (pos) { seguir = true; mapa.easeTo({ center: pos, bearing: direccion, pitch: 60, zoom: 17 }); }
+    else { // vista general de la ruta
+      const lim = ruta.geometry.coordinates.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(origen, origen));
+      mapa.fitBounds(lim, { padding: 80, pitch: 0 });
+    }
+    actualizarGuia();
+  } catch { aviso('No se pudo calcular la ruta. Revisa la conexión.'); }
+}
+
+function actualizarGuia() {
+  if (!pasos.length) return;
+  const aqui = pos || pasos[0].maneuver.location;
+  let d = distancia(aqui, pasos[paso].maneuver.location);
+  if (d < 30 && paso < pasos.length - 1) { paso++; d = distancia(aqui, pasos[paso].maneuver.location); }
+  const m = pasos[paso].maneuver, calle = pasos[paso].name;
+  const texto = m.type === 'arrive' ? 'Destino' : m.type.includes('round') ? 'Entra a la rotonda' : (GIROS[m.modifier] || 'Continúa');
+  const lejos = d >= 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d / 10) * 10 + ' m';
+  $('maniobra').textContent = m.type === 'arrive' && d < 30 ? 'Llegaste' : `${texto} en ${lejos}${calle ? ' · ' + calle : ''}`;
+}
+
+$('cancelar').onclick = () => {
+  pasos = []; $('guia').hidden = true;
+  mapa.getSource('ruta').setData({ type: 'FeatureCollection', features: [] });
+};
+</script>
+</body>
+</html>
