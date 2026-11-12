@@ -15,6 +15,13 @@
     --borde:rgba(255,255,255,.3); --linea:rgba(255,255,255,.2); --brillo:none; --sesgo:none }
   body[data-tema="radar"] #vel { font-style:normal; text-shadow:none }
   body[data-tema="radar"] .auto { filter:drop-shadow(0 0 2px #000) }
+  /* diseño BLOQUES: verde, pixelado, letra monoespaciada, sombras duras */
+  body[data-tema="bloques"] { --panel:rgba(48,48,48,.92); --neon:#ffe14a; --texto:#fff; --tenue:#c6c6c6;
+    --borde:#c6c6c6; --linea:rgba(255,255,255,.25); --brillo:4px 4px 0 rgba(0,0,0,.55); --sesgo:none;
+    font-family:"Courier New",Consolas,monospace; font-weight:700 }
+  body[data-tema="bloques"] #vel { font-style:normal; text-shadow:3px 3px 0 #000; font-family:inherit }
+  body[data-tema="bloques"] .auto { border-bottom-color:#fff; filter:drop-shadow(2px 2px 0 #000) }
+  body[data-tema="bloques"] .maplibregl-canvas { image-rendering:pixelated } /* el mapa se dibuja a baja resolución y se agranda sin suavizar */
   [hidden] { display:none !important }
   html,body,#mapa { height:100%; margin:0; background:var(--bg) }
   body { font:15px/1.3 "Segoe UI",Roboto,Arial,sans-serif; color:var(--texto); overflow:hidden }
@@ -50,6 +57,7 @@
   #inicio small { display:block; font-size:13px; font-weight:400; letter-spacing:0; margin-top:4px }
   #inicio [data-tema="neon"] { color:#00e5ff; background:#05070d; box-shadow:0 0 14px rgba(0,229,255,.4); font-style:italic }
   #inicio [data-tema="radar"] { color:#fff; background:#4b4f55 }
+  #inicio [data-tema="bloques"] { color:#fff; background:#5a8f3c; border-color:#3b2a1a; font-family:"Courier New",Consolas,monospace; box-shadow:4px 4px 0 #3b2a1a }
 </style>
 </head>
 <body>
@@ -59,6 +67,7 @@
   <p>ELIGE EL DISEÑO DEL MAPA</p>
   <button type="button" data-tema="neon">NEÓN<small>Nocturno, vista inclinada, edificios 3D</small></button>
   <button type="button" data-tema="radar">RADAR<small>Gris, calles claras, vista desde arriba</small></button>
+  <button type="button" data-tema="bloques">BLOQUES<small>Verde, pixelado, edificios como cubos</small></button>
 </div>
 
 <div id="arriba" class="panel">
@@ -78,7 +87,7 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const VERSION = 'v8'; // se sube en cada cambio; se muestra en el botón "i"
+const VERSION = 'v9'; // se sube en cada cambio; se muestra en el botón "i"
 const RAD = Math.PI / 180;
 
 // distancia en metros entre dos puntos [lon, lat]
@@ -112,10 +121,14 @@ mapa.once('load', () => {
 
 // Colores del mapa para cada diseño
 const TEMAS = {
-  neon: { fondo: '#05070d', agua: '#08172e', edificio: '#0c1220', texto: '#9fdcff', halo: '#000', ruta: '#ff2bd6', brillo: 0.3, inclinacion: 60,
+  neon: { fondo: '#05070d', agua: '#08172e', edificio: '#0c1220', texto: '#9fdcff', halo: '#000', edificio3d: '#101a2e', ruta: '#ff2bd6', brillo: 0.3, inclinacion: 60,
     vias: ['match', ['get', 'class'], ['motorway', 'trunk'], '#ff7a00', ['primary', 'secondary'], '#ffd000', ['rail', 'transit'], '#1b2333', '#3d5278'] },
   radar: { fondo: '#4b4f55', terreno: '#545a56', agua: '#5f8fb0', edificio: '#5d6269', texto: '#fff', halo: '#1c1d1f', ruta: '#a65bf0', brillo: 0, inclinacion: 0,
-    vias: ['match', ['get', 'class'], ['motorway', 'trunk'], '#f2f2f2', ['primary', 'secondary'], '#dcdfe2', ['rail', 'transit'], '#3c3f43', '#bfc3c8'] }
+    vias: ['match', ['get', 'class'], ['motorway', 'trunk'], '#f2f2f2', ['primary', 'secondary'], '#dcdfe2', ['rail', 'transit'], '#3c3f43', '#bfc3c8'] },
+  // pixel: fracción de resolución con que se dibuja el mapa (menos = bloques más grandes, nombres menos legibles)
+  bloques: { fondo: '#7db04a', terreno: '#5a8f3c', agua: '#3f76e4', edificio: '#8f8f8f', edificio3d: '#9a9a9a', texto: '#fff', halo: '#2b2b2b',
+    ruta: '#e53935', brillo: 0, inclinacion: 45, pixel: 0.5,
+    vias: ['match', ['get', 'class'], ['motorway', 'trunk'], '#b8975a', ['primary', 'secondary'], '#cdb277', ['rail', 'transit'], '#5e5e5e', '#dcc892'] }
 };
 let tema = null, cargado = false;
 
@@ -136,6 +149,8 @@ function aplicarTema() {
     }
   }
   if (mapa.getLayer('edificios3d')) mapa.setLayoutProperty('edificios3d', 'visibility', t.inclinacion ? 'visible' : 'none');
+  if (mapa.getLayer('edificios3d') && t.edificio3d) mapa.setPaintProperty('edificios3d', 'fill-extrusion-color', t.edificio3d);
+  if (t.pixel) mapa.setPixelRatio?.(t.pixel);
   mapa.setPaintProperty('ruta', 'line-color', t.ruta);
   mapa.setPaintProperty('ruta-brillo', 'line-color', t.ruta);
   mapa.setPaintProperty('ruta-brillo', 'line-opacity', t.brillo);
