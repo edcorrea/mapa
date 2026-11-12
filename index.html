@@ -163,7 +163,7 @@ $('buscar').onsubmit = async ev => {
   } catch { aviso('No se pudo buscar. Revisa la conexión.'); }
 };
 
-// ---------- Ruta (OSRM) ----------
+// ---------- Ruta (Valhalla) ----------
 let pasos = [], paso = 1, destinoActual = null, sinPeaje = false;
 try { sinPeaje = localStorage.sinPeaje === '1'; } catch {} // recuerda la preferencia en este teléfono
 $('peaje').setAttribute('aria-pressed', sinPeaje);
@@ -173,30 +173,45 @@ $('peaje').onclick = () => {
   try { localStorage.sinPeaje = sinPeaje ? '1' : '0'; } catch {}
   if (destinoActual) trazarRuta(destinoActual); // recalcula la ruta activa
 };
-const GIROS = { left: 'Gira a la izquierda', right: 'Gira a la derecha', 'slight left': 'Mantente a la izquierda',
-  'slight right': 'Mantente a la derecha', 'sharp left': 'Gira fuerte a la izquierda', 'sharp right': 'Gira fuerte a la derecha',
-  straight: 'Sigue derecho', uturn: 'Da la vuelta' };
+// decodifica la línea codificada de Valhalla (polilínea con 6 decimales) a puntos [lon, lat]
+function decodificar(txt, factor = 1e6) {
+  const puntos = []; let i = 0, lat = 0, lon = 0;
+  const siguiente = () => {
+    let valor = 0, corrimiento = 0, byte;
+    do { byte = txt.charCodeAt(i++) - 63; valor |= (byte & 31) << corrimiento; corrimiento += 5; } while (byte >= 32);
+    return valor & 1 ? ~(valor >> 1) : valor >> 1;
+  };
+  while (i < txt.length) { lat += siguiente(); lon += siguiente(); puntos.push([lon / factor, lat / factor]); }
+  return puntos;
+}
+// verificación con el ejemplo publicado del formato (5 decimales): primer punto 38.5, -120.2; tercero 43.252, -126.453
+console.assert(JSON.stringify(decodificar('_p~iF~ps|U_ulLnnqC_mqNvxq`@', 1e5)) === '[[-120.2,38.5],[-120.95,40.7],[-126.453,43.252]]', 'decodificar mal');
 
 async function trazarRuta(destino) {
   const origen = pos || mapa.getCenter().toArray(); // sin GPS parte del centro del mapa (útil para probar en el PC)
-  // shortcut: servidor de demostración de OSRM, sin garantía de servicio; cambiar a uno propio o de pago si se usa a diario
-  const url = `https://router.project-osrm.org/route/v1/driving/${origen};${destino}?overview=full&geometries=geojson&steps=true`;
   destinoActual = destino;
+  const consulta = {
+    locations: [{ lon: origen[0], lat: origen[1] }, { lon: destino[0], lat: destino[1] }],
+    costing: 'auto', language: 'es-ES', units: 'kilometers',
+    costing_options: { auto: { use_tolls: sinPeaje ? 0 : 0.5 } } // 0 = evitar peajes; 0.5 = valor normal
+  };
+  // shortcut: servidor público de Valhalla (FOSSGIS), uso moderado y sin garantía; cambiar a uno propio o de pago si se usa a diario
+  const url = 'https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify(consulta));
   try {
-    let r = await (await fetch(url + (sinPeaje ? '&exclude=toll' : ''))).json();
-    let peaje = sinPeaje ? ' · sin peaje' : '';
-    // si el servidor no puede evitar peajes (o no hay camino sin ellos), se usa la ruta normal y se avisa
-    if (sinPeaje && r.code !== 'Ok') { r = await (await fetch(url)).json(); peaje = ' · CON peaje (no hay alternativa)'; }
-    if (r.code !== 'Ok') return aviso('No hay ruta en auto hasta ahí.');
-    const ruta = r.routes[0];
-    mapa.getSource('ruta').setData({ type: 'Feature', geometry: ruta.geometry });
-    pasos = ruta.legs[0].steps; paso = Math.min(1, pasos.length - 1);
-    $('resumen').textContent = (ruta.distance / 1000).toFixed(1) + ' km · ' + Math.round(ruta.duration / 60) + ' min' + peaje;
+    const r = await (await fetch(url)).json();
+    if (!r.trip) return aviso('No hay ruta en auto hasta ahí.');
+    const tramo = r.trip.legs[0], linea = decodificar(tramo.shape);
+    mapa.getSource('ruta').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: linea } });
+    pasos = tramo.maneuvers.map(m => ({ donde: linea[m.begin_shape_index], texto: m.instruction }));
+    paso = Math.min(1, pasos.length - 1);
+    // has_toll lo informa el servidor: dice si la ruta final pasa por algún peaje
+    const peaje = r.trip.summary.has_toll ? (sinPeaje ? ' · CON peaje (no hay alternativa)' : ' · con peaje') : ' · sin peaje';
+    $('resumen').textContent = r.trip.summary.length.toFixed(1) + ' km · ' + Math.round(r.trip.summary.time / 60) + ' min' + peaje;
     $('guia').hidden = false;
     aviso('');
     if (pos) { seguir = true; mapa.easeTo({ center: pos, bearing: direccion, pitch: 60, zoom: 17 }); }
     else { // vista general de la ruta
-      const lim = ruta.geometry.coordinates.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(origen, origen));
+      const lim = linea.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(origen, origen));
       mapa.fitBounds(lim, { padding: 80, pitch: 0 });
     }
     actualizarGuia();
@@ -205,13 +220,11 @@ async function trazarRuta(destino) {
 
 function actualizarGuia() {
   if (!pasos.length) return;
-  const aqui = pos || pasos[0].maneuver.location;
-  let d = distancia(aqui, pasos[paso].maneuver.location);
-  if (d < 30 && paso < pasos.length - 1) { paso++; d = distancia(aqui, pasos[paso].maneuver.location); }
-  const m = pasos[paso].maneuver, calle = pasos[paso].name;
-  const texto = m.type === 'arrive' ? 'Destino' : m.type.includes('round') ? 'Entra a la rotonda' : (GIROS[m.modifier] || 'Continúa');
+  const aqui = pos || pasos[0].donde, ultimo = pasos.length - 1;
+  let d = distancia(aqui, pasos[paso].donde);
+  if (d < 30 && paso < ultimo) { paso++; d = distancia(aqui, pasos[paso].donde); }
   const lejos = d >= 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d / 10) * 10 + ' m';
-  $('maniobra').textContent = m.type === 'arrive' && d < 30 ? 'Llegaste' : `${texto} en ${lejos}${calle ? ' · ' + calle : ''}`;
+  $('maniobra').textContent = paso === ultimo && d < 30 ? 'Llegaste' : `En ${lejos}: ${pasos[paso].texto}`;
 }
 
 $('cancelar').onclick = () => {
