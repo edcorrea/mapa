@@ -56,6 +56,7 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const $ = id => document.getElementById(id);
+const VERSION = 'v6'; // se sube en cada cambio; se muestra en el botón "i"
 const RAD = Math.PI / 180;
 
 // distancia en metros entre dos puntos [lon, lat]
@@ -81,7 +82,7 @@ const mapa = new maplibregl.Map({
   center: [-70.65, -33.45], zoom: 15, pitch: 60, attributionControl: false
 });
 // El crédito a OpenStreetMap es obligatorio por licencia: queda plegado en un botón "i"
-mapa.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+mapa.addControl(new maplibregl.AttributionControl({ compact: true, customAttribution: 'Mapa NFS ' + VERSION }), 'bottom-right');
 mapa.once('load', () => {
   const credito = document.querySelector('.maplibregl-ctrl-attrib');
   credito?.classList.remove('maplibregl-compact-show'); credito?.removeAttribute('open');
